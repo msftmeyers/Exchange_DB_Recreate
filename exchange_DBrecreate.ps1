@@ -13,6 +13,7 @@
 .VERSIONS
     V1.0  03.11.2025 - Initial Version
     V1.1  07.11.2025 - Minor changes
+    V1.2  10.11.2025 - Minor changes how to add copies and changed the way, isexcludedfromprovisioning will be handled if lagged copies are detected
     
 .AUTHOR/COPYRIGHT:
     Steffen Meyer
@@ -27,7 +28,7 @@ Param(
      [String]$Database
      )
 
-$version = "V1.1_07.11.2025"
+$version = "V1.2_10.11.2025"
 
 $now = Get-Date
 
@@ -275,12 +276,12 @@ If ($Cont -eq "Y")
         try
         {
             Get-MailboxDatabase $Database | Set-MailboxDatabase -CircularLoggingEnabled $false -ErrorAction Stop -WarningAction SilentlyContinue
-            Write-Host "...SUCCESSFUL, waiting 20 seconds for AD replication..." -ForegroundColor Green
-            Start-Sleep 20
+            Write-Host "...SUCCESSFUL, waiting 30 seconds for AD replication..." -ForegroundColor Green
+            Start-Sleep 30
         }
         catch
         {
-            Write-Host "`nATTENTION: We couldn't disable Circular Logging for ""$database""." -ForegroundColor Red
+            Write-Host "`nATTENTION: We couldn't disable Circular Logging for ""$database"", re-run the script." -ForegroundColor Red
             Return
         }
     }
@@ -302,7 +303,7 @@ If ($Cont -eq "Y")
             }
             catch
             {
-                Write-Host "`nATTENTION: We couldn't remove all passive or lagged copies of ""$database""." -ForegroundColor Red
+                Write-Host "`nATTENTION: We couldn't remove all passive or lagged copies of ""$database"", remove copies manually, re-run the script and take care of all copies to be re-created afterwards." -ForegroundColor Red
                 Return
             }
         }
@@ -325,7 +326,7 @@ If ($Cont -eq "Y")
     }
     catch
     {
-        Write-Host "`nATTENTION: We couldn't DISMOUNT database ""$database""." -ForegroundColor Red
+        Write-Host "`nATTENTION: We couldn't DISMOUNT database ""$database"", dismount manually, re-run the script and take care of all copies to be re-created afterwards." -ForegroundColor Red
         Return
     }
 
@@ -348,7 +349,7 @@ If ($Cont -eq "Y")
     }
     catch
     {
-        Write-Host "`nATTENTION: We couldn't DELETE all EDB and LOG files of database ""$database"" on server ""$(($DB).MountedOnServer)"" ." -ForegroundColor Red
+        Write-Host "`nATTENTION: We couldn't DELETE all EDB and LOG files of database ""$database"" on server ""$(($DB).MountedOnServer)"", delete all files manually, re-run the script and take care of all copies to be re-created afterwards." -ForegroundColor Red
         Return
     }
 
@@ -362,7 +363,7 @@ If ($Cont -eq "Y")
     }
     catch
     {
-        Write-Host "`nATTENTION: We couldn't MOUNT database ""$database""." -ForegroundColor Red
+        Write-Host "`nATTENTION: We couldn't MOUNT database ""$database"", use MOUNT-DATABASE -FORCE manually, re-run the script and take care of all copies to be re-created afterwards." -ForegroundColor Red
         Return
     }
 
@@ -382,8 +383,8 @@ If ($Cont -eq "Y")
             {
                 Write-host "`nADDING DBCopy #$CopyCount (""$($DBCopy.Name)"")..."
                 Get-MailboxDatabase $database | Add-MailboxDatabaseCopy -MailboxServer $DBCopy.MailboxServer -ActivationPreference $DBCopy.ActivationPreference -ReplayLagTime $DBCopy.ReplayLagStatus.ConfiguredLagTime -WarningAction SilentlyContinue -ErrorAction Stop
-                Write-Host "...SUCCESSFUL, DBCopy #$CopyCount was added, waiting 20 seconds for AD replication." -ForegroundColor Green
-                Start-Sleep 20
+                Write-Host "...SUCCESSFUL, DBCopy #$CopyCount was added, waiting 30 seconds for AD replication." -ForegroundColor Green
+                Start-Sleep 30
             
                 Write-host "SUSPENDING DBCopy #$CopyCount (""$($DBCopy.Name)"")..."
                 Suspend-MailboxDatabaseCopy $DBCopy.Name -WarningAction SilentlyContinue -ErrorAction Stop
@@ -403,8 +404,7 @@ If ($Cont -eq "Y")
             }
             catch
             {
-                Write-Host "`nATTENTION: We couldn't ADD, SUSPEND or SEED ""$($DBCopy.Name)"" of database ""$database""." -ForegroundColor Red
-                Return
+                Write-Host "`nATTENTION: We couldn't ADD, SUSPEND or SEED DBCopy #$CopyCount of database ""$database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", please verify." -ForegroundColor Red
             }
         }
         Write-Host "`nNOTICE: List of configured Database Copies for database ""$database"":" -ForegroundColor Green
@@ -431,8 +431,7 @@ If ($Cont -eq "Y")
         }
         catch
         {
-            Write-Host "`nATTENTION: We couldn't ENABLE Circular Logging for database ""$database""." -ForegroundColor Red
-            Return
+            Write-Host "`nATTENTION: We couldn't ENABLE Circular Logging for database ""$database"", enable it manually by using ""Set-Mailboxdatabase $database -CircularLoggingEnabled $True""" -ForegroundColor Red
         }
     }
     else
@@ -442,29 +441,34 @@ If ($Cont -eq "Y")
     }
 
    #Disable IsExcludeFromProvisioning, if it was active before 
-    Write-Host "`nTASK 8: IF Database ""$database"" was excluded from Mailbox provisioning, it will be included now again..." -ForegroundColor Cyan
-    if ($DB.IsExcludedFromProvisioning -eq $True)
+    Write-Host "`nTASK 8: IF Database ""$database"" was excluded from Mailbox provisioning, it will be included again..." -ForegroundColor Cyan
+    if ($DB.IsExcludedFromProvisioning -eq "True")
     {
-        try
+        if (!($DBCopies.ReplayLagStatus.Enabled -contains "True"))
         {
-            $IsExcluded = (Get-MailboxDatabase $database).distinguishedname | Set-ADObject -Replace @{msExchProvisioningFlags=3} -WarningAction SilentlyContinue -ErrorAction Stop
-            Write-Host "...SUCCESSFUL!" -ForegroundColor Green
-            Start-Sleep 5
+            try
+            {
+                $IsExcluded = (Get-MailboxDatabase $database).distinguishedname | Set-ADObject -Replace @{msExchProvisioningFlags=1} -WarningAction SilentlyContinue -ErrorAction Stop
+                Write-Host "...SUCCESSFUL!" -ForegroundColor Green
+                Start-Sleep 5
+            }
+            catch
+            {
+                Write-Host "`nATTENTION: We couldn't ENABLE Mailbox Provisioning for database ""$database""." -ForegroundColor Red
+            }
         }
-        catch
+        else
         {
-            Write-Host "`nATTENTION: We couldn't ENABLE Mailbox Provisioning for database ""$database""." -ForegroundColor Red
-            Return
+            Write-Host "`nNOTICE: We detected at least ONE LAGGED COPY with a REPLAYLAGTIME of $($maxlag.lagtime) days. You" -ForegroundColor Yellow
+            Write-Host   "should wait at least $($maxlag.lagtime) days before moving Mailboxes to this database to ensure SLA compliance." -ForegroundColor Yellow
+            Write-Host "`nWe didn't include Database ""$database"" back into Exchange Mailbox provisioning, you need to do this MANUALLY in $($maxlag.lagtime) days!" -ForegroundColor Red
+            Write-Host   "Use: ""Set-MailboxDatabase $($database) -IsExcludedFromProvisioning `$false"""
         }
     }
-    else
-    {
-        Write-Host "...Database ""$database"" was NOT EXCLUDED from Mailbox Provisioning before this script was started." -ForegroundColor Green
-        Start-Sleep 5
-    }
-
+        
+    #Final statement
     Write-Host "`nRESULT: You successfully created new and empty EDB and LOG files for Database ""$database"", including new copies and all settings like before, but without a new Database AD object, well done!" -ForegroundColor Green
-    Write-Host "`nNOTICE: If there was at least one LAGGED database copy included, wait at least the configured, longest replaylagtime before moving Mailboxes to this database to ensure SLA compliance." -ForegroundColor Yellow
+    
 }
 else
 {
