@@ -30,6 +30,7 @@
     V1.1  07.11.2025 - Minor changes
     V1.2  10.11.2025 - Minor changes how to add copies and changed the way, isexcludedfromprovisioning will be handled if lagged copies are detected
     V1.3  03.12.2025 - minor changes, description added
+    V1.4  10.12.2025 - Changed DB Filter
 #>
 
 [CmdletBinding()]
@@ -39,7 +40,7 @@ Param(
      [String]$Database
      )
 
-$version = "V1.3_03.12.2025"
+$version = "V1.4_10.12.2025"
 
 $now = Get-Date
 
@@ -112,7 +113,7 @@ Write-Host "`nCHECK 2: Are there any enabled mailbox(es) left pointing to ""$Dat
 try
 {
     Import-Module ActiveDirectory
-    $Mailboxes = Get-ADUser -Filter * -Properties homeMDB,msExchArchiveDatabaseLink -ErrorAction Stop | Where-Object {($_.homemdb -like "*$Database*" -or $_.msExchArchiveDatabaseLink -like "*$Database*") -and $_.samaccountname -notlike "HealthMailbox*"}
+    $Mailboxes = Get-ADUser -Filter * -Properties homeMDB,msExchArchiveDatabaseLink -ErrorAction Stop | Where-Object {($_.homemdb -eq $DB.distinguishedname -or $_.msExchArchiveDatabaseLink -like "*$Database*") -and $_.samaccountname -notlike "HealthMailbox*"}
 }
 catch
 {
@@ -121,7 +122,7 @@ catch
 
 if ($Mailboxes)
 {
-    Write-Host "`nATTENTION: We found still $(($Mailboxes).count) active mailbox(es)/archive(s) (except HealthMailboxes) in ""$Database"", please move them first using ""exchange_DBredistribute.ps1"" Script before re-creating EDB and LOG files using this script." -ForegroundColor Red
+    Write-Host "`nATTENTION: We found still $(($Mailboxes | Measure-Object).count) active mailbox(es)/archive(s) (except HealthMailboxes) in ""$Database"", please move them first using ""exchange_DBredistribute.ps1"" Script before re-creating EDB and LOG files using this script." -ForegroundColor Red
     Return
 }
 else
