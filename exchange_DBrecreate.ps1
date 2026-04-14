@@ -26,12 +26,13 @@
     Cloud Solution Architect
     Microsoft Deutschland GmbH
 
-    V1.0  03.11.2025 - Initial Version
-    V1.1  07.11.2025 - Minor changes
-    V1.2  10.11.2025 - Minor changes how to add copies and changed the way, isexcludedfromprovisioning will be handled if lagged copies are detected
-    V1.3  03.12.2025 - minor changes, description added
-    V1.4  10.12.2025 - Changed DB Filter
-    V2.0  18.12.2025 - Changed the order to add, suspend and seed DB copies. Due to different AD replication delays, I've added a function to wait for AD replication
+    V1.0 - 03.11.2025 - Initial Version
+    V1.1 - 07.11.2025 - Minor changes
+    V1.2 - 10.11.2025 - Minor changes how to add copies and changed the way, isexcludedfromprovisioning will be handled if lagged copies are detected
+    V1.3 - 03.12.2025 - minor changes, description added
+    V1.4 - 10.12.2025 - Changed DB Filter
+    V2.0 - 18.12.2025 - Changed the order to add, suspend and seed DB copies. Due to different AD replication delays, I've added a function to wait for AD replication
+    V2.1 - 13.04.2026 - Changed max timeout in wait-until function to 600 seconds
 #>
 
 [CmdletBinding()]
@@ -41,7 +42,7 @@ Param(
      [String]$Database
      )
 
-$version = "V2.0_18.12.2025"
+$version = "V2.1_13.04.2026"
 
 $now = Get-Date
 
@@ -50,7 +51,7 @@ function Wait-Until
 {
     param(
         [scriptblock]$Condition,
-        [int]$TimeoutSeconds = 300,
+        [int]$TimeoutSeconds = 600,
         [int]$SleepSeconds = 15
     )
 
@@ -328,7 +329,7 @@ If ($Cont -eq "Y")
 
             if (!($Result))
             {
-                Write-Host "`nATTENTION: Within the last 5 minutes, we couldn't find a replicated, disabled CircularLogging setting of database ""$Database"", please verify." -ForegroundColor Red
+                Write-Host "`nATTENTION: Within the last 10 minutes, we couldn't find a replicated, disabled CircularLogging setting of database ""$Database"", please verify." -ForegroundColor Red
                 Return
             }
             else
@@ -447,7 +448,7 @@ If ($Cont -eq "Y")
 
                 if (!($Result))
                 {
-                    Write-Host "`nATTENTION: Within the last 5 minutes, we couldn't add and/or replicate DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", please verify." -ForegroundColor Red
+                    Write-Host "`nATTENTION: Within the last 10 minutes, we couldn't find DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", this can be a caused by AD replication delays, please verify." -ForegroundColor Red
                 }
                 else
                 {
@@ -489,7 +490,7 @@ If ($Cont -eq "Y")
 
                 if (!($Result))
                 {
-                    Write-Host "`nATTENTION: Within the last 5 minutes, we couldn't add and/or replicate DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", please verify." -ForegroundColor Red
+                    Write-Host "`nATTENTION: Within the last 10 minutes, we couldn't SUSPEND DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", this can be caused by AD replication delays, please verify." -ForegroundColor Red
                 }
                 else
                 {
@@ -531,7 +532,7 @@ If ($Cont -eq "Y")
 
                 if (!($Result))
                 {
-                    Write-Host "`nATTENTION: Within the last 5 minutes, we couldn't add and/or replicate DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", please verify." -ForegroundColor Red
+                    Write-Host "`nATTENTION: Within the last 10 minutes, we couldn't SEED DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", this can be caused by AD replication delays, please verify." -ForegroundColor Red
                 }
                 else
                 {
