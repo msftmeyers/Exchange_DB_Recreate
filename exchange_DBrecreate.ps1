@@ -33,6 +33,7 @@
     V1.4 - 10.12.2025 - Changed DB Filter
     V2.0 - 18.12.2025 - Changed the order to add, suspend and seed DB copies. Due to different AD replication delays, I've added a function to wait for AD replication
     V2.1 - 13.04.2026 - Changed max timeout in wait-until function to 600 seconds
+    V2.2 - 20.04.2026 - Changed "isExcludedFromProvisioning" CMDlet suggestion to avoid a value in "IsExcludedFromProvisioningBy"
 #>
 
 [CmdletBinding()]
@@ -42,7 +43,7 @@ Param(
      [String]$Database
      )
 
-$version = "V2.1_13.04.2026"
+$version = "V2.2_20.04.2026"
 
 $now = Get-Date
 
@@ -646,7 +647,7 @@ If ($Cont -eq "Y")
             Write-Host "`nNOTICE: We detected at least ONE LAGGED COPY with a REPLAYLAGTIME of $($maxlag.lagtime) days. You" -ForegroundColor Yellow
             Write-Host   "should wait at least $($maxlag.lagtime) days before moving Mailboxes to this database to ensure SLA compliance." -ForegroundColor Yellow
             Write-Host "`nWe didn't include Database ""$Database"" back into Exchange Mailbox provisioning, you need to do this MANUALLY in $($maxlag.lagtime) days!" -ForegroundColor Red
-            Write-Host   "Use: ""Set-MailboxDatabase $($Database) -IsExcludedFromProvisioning `$false"""
+            Write-Host   "Use: ""(Get-MailboxDatabase $($Database)).distinguishedname | Set-ADObject -Replace `@{msExchProvisioningFlags=1}"""
         }
     }
     else
