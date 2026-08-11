@@ -36,6 +36,7 @@
     V2.2 - 20.04.2026 - Changed "isExcludedFromProvisioning" CMDlet suggestion to avoid a value in "IsExcludedFromProvisioningBy"
     V2.3 - 11.05.2026 - minor change in a date format
     V2.4 - 10.08.2026 - corrected wait-until loop for suspending and seeding copies, corrected a long running behaviour with lagged copy resync process
+    V2.5 - 11.08.2026 - improved status notification during wait-until loops
 #>
 
 [CmdletBinding()]
@@ -45,16 +46,19 @@ Param(
      [String]$Database
      )
 
-$version = "V2.4_10.08.2026"
+$version = "V2.5_11.08.2026"
 
 $now = Get-Date
 
-#Function for a delay until AD replication is successful
+#Function for a delay until a condition is fulfilled
 function Wait-Until
 {
     param(
+        [string]$Status,
+        [string]$WaitMessage,
         [scriptblock]$Condition,
-        [int]$TimeoutSeconds = 600,
+        [scriptblock]$CurrentStatus,
+        [int]$TimeoutSeconds = 900,
         [int]$SleepSeconds = 15
     )
 
@@ -63,10 +67,14 @@ function Wait-Until
     while ((Get-Date) -lt $End)
     {
         if (& $Condition) {return $true }
-        Write-Host "`n...waiting 15 seconds for AD replication..." -ForegroundColor Yellow
-        Write-Host "...please be patient, it might take some time...(max: $($TimeoutSeconds) sec)" -ForegroundColor Yellow
-        Write-Host "...Script is continuing when expected status is fulfilled." -ForegroundColor Yellow
 
+        $Current = & $CurrentStatus
+
+        Write-Host "`n...waiting for ""$($Status)"" - expected status: ""$($WaitMessage)"""
+        Write-Host "...current status: ""$($Current)""" -ForegroundColor Yellow
+        Write-Host "...please be patient, it may take some time..."
+        Write-Host "...next poll in $($SleepSeconds) seconds...(overall timeout: $($TimeoutSeconds / 60) minutes)"
+        
         Start-Sleep -Seconds $SleepSeconds
     }
     return $false
@@ -122,20 +130,20 @@ Write-Host "`nWe will now start checking ALL prerequisites before asking you for
 
 Set-ADServerSettings -ViewEntireForest $true
 
-#Checking Database name
+#Checking Database availability
 Write-Host "`nCHECK 1 of 7: Is database ""$Database"" available in this Exchange Organization..." -ForegroundColor Cyan
 $DB = Get-MailboxDatabase -Identity $Database -Status -ErrorAction SilentlyContinue
-if (!($DB))
+if ($DB)
+{
+    Write-Host "...SUCCESSFUL!" -ForegroundColor Green
+}
+else
 {
     Write-Host "`nATTENTION: Database ""$Database"" cannot be found in this Exchange Organization." -ForegroundColor Red
     Return
 }
-else
-{
-    Write-Host "...SUCCESSFUL!" -ForegroundColor Green
-}
 
-#AD Lookup for Objects pointing still to homemdb of $Database
+#AD Lookup for objects pointing still to $Database as homemdb value
 Write-Host "`nCHECK 2 of 7: Are there any types of enabled mailboxes left pointing to ""$Database"" (this may take a while)..." -ForegroundColor Cyan
 try
 {
@@ -147,14 +155,14 @@ catch
     Write-Host "`nATTENTION: We couldn't get a list of enabled mailboxes/archives still pointing to ""$Database"" in ActiveDirectory, please verify and restart script." -ForegroundColor Red
 }
 
-if ($Mailboxes)
+if (!($Mailboxes))
 {
-    Write-Host "`nATTENTION: We found still $(($Mailboxes | Measure-Object).count) active mailbox(es)/archive(s) (except HealthMailboxes) in ""$Database"", please move them first using ""exchange_DBredistribute.ps1"" Script before re-creating EDB and LOG files using this script." -ForegroundColor Red
-    Return
+    Write-Host "...SUCCESSFUL!" -ForegroundColor Green
 }
 else
 {
-    Write-Host "...SUCCESSFUL!" -ForegroundColor Green
+    Write-Host "`nATTENTION: We found still $(($Mailboxes | Measure-Object).count) active mailbox(es)/archive(s) (except HealthMailboxes) in ""$Database"", please move them first using ""exchange_DBredistribute.ps1"" Script before re-creating EDB and LOG files using this script." -ForegroundColor Red
+    Return
 }
 
 #Check, if last mailbox removal time is older than mailbox retention on database
@@ -169,7 +177,7 @@ if ($DB.Mounted -eq $True)
     }
     catch
     {
-        Write-Host "`nATTENTION: We couldn't get any statistics of ""$Database""." -ForegroundColor Red
+        Write-Host "`nATTENTION: We couldn't get any/all statistics of ""$Database"", troubleshoot and re-run this script..." -ForegroundColor Red
         Return
     }
 }
@@ -186,7 +194,7 @@ else
 }
 
 #Detect RecoveryDB
-Write-Host "`nCHECK 4 of 7: Database ""$Database"" is NOT a RECOVERY database..." -ForegroundColor Cyan
+Write-Host "`nCHECK 4 of 7: Is Database ""$Database"" a RECOVERY database..." -ForegroundColor Cyan
 
 if (!($DB.Recovery -eq $True))
 {
@@ -228,11 +236,11 @@ try
 }
 catch
 {
-    Write-Host "`nATTENTION: We couldn't get a list of additional database copies of database ""$Database""." -ForegroundColor Red
+    Write-Host "`nATTENTION: We couldn't get a list of additional database copies of database ""$Database"", troubleshoot and re-run this script." -ForegroundColor Red
     Return
 }
 
-#Is there any lagged copy? If yes, what is maximum replay lag time?
+#Are there any lagged copies? If yes, what is the maximum "replaylagtime"?
 Write-Host "`nCHECK 6 of 7: Are there any lagged copies configured and what is the maximum lag time of database ""$Database""..." -ForegroundColor Cyan
 if ($DBCopies)
 {
@@ -289,7 +297,7 @@ if (($DBStats | sort -Descending disconnectdate | select -first 1).disconnectdat
 
     if ($ForceRet -ne "Y")
     {
-        Write-Host "`nNOTICE: The script hasn't changed anything. EDB and LOG files of Database ""$Database"" were not re-created." -ForegroundColor Yellow
+        Write-Host "`nNOTICE: The script hasn't changed anything. EDB and LOG files of Database ""$Database"" were not re-created, exiting..." -ForegroundColor Yellow
         Return
     }
     else
@@ -319,7 +327,7 @@ If ($Cont -eq "Y")
 
     #Starting Re-Creation Tasks
     Write-Host "`nWe will now start creating empty EDB and LOG files and starting a new transaction log file sequence.                     "
-    Write-Host   "The AD object of the Database will NOT be re-created, but all DB copies and parameters will be re-established again."
+    Write-Host   "The AD object of the Database will be preserved, but all DB copies and parameters will be re-established again."
 
     #Disable CircularLogging before removing copies
     Write-Host "`nTASK 1 of 11: DISABLE Circular Logging for Database ""$Database""..." -ForegroundColor Cyan
@@ -329,7 +337,7 @@ If ($Cont -eq "Y")
         {
             $circ = Get-MailboxDatabase $Database | Set-MailboxDatabase -CircularLoggingEnabled $false -ErrorAction Stop -WarningAction SilentlyContinue
 
-            $Result = Wait-Until {(Get-MailboxDatabase $Database).circularloggingenabled -eq $False}
+            $Result = Wait-Until -Status "$($Database)" -WaitMessage "CircularLoggingEnabled = False" -Condition {(Get-MailboxDatabase $Database).circularloggingenabled -eq $False} -CurrentStatus {(Get-MailboxDatabase $Database).circularloggingenabled }
 
             if ($Result)
             {
@@ -338,13 +346,13 @@ If ($Cont -eq "Y")
             }
             else
             {
-                Write-Host "`nATTENTION: Within the last 10 minutes, we couldn't find a replicated, disabled CircularLogging setting of database ""$Database"", please verify." -ForegroundColor Red
+                Write-Host "`nATTENTION: We couldn't find a replicated, disabled CircularLogging setting of database ""$Database"", troubleshoot and re-run this script." -ForegroundColor Red
                 Return
             }
         }
         catch
         {
-            Write-Host "`nATTENTION: We couldn't disable CircularLogging for ""$Database"", re-run the script." -ForegroundColor Red
+            Write-Host "`nATTENTION: We couldn't disable CircularLogging for ""$Database"", troubleshoot and re-run this script." -ForegroundColor Red
             Return
         }
     }
@@ -442,12 +450,13 @@ If ($Cont -eq "Y")
         {
             $CopyCount++
 
+            Write-host "`nADDING DBCopy #$CopyCount (""$($DBCopy.Name)"")..."
+
             try
             {
-                Write-host "`nADDING DBCopy #$CopyCount (""$($DBCopy.Name)"")..."
                 $add = Get-MailboxDatabase $Database | Add-MailboxDatabaseCopy -MailboxServer $DBCopy.MailboxServer -ActivationPreference $DBCopy.ActivationPreference -ReplayLagTime $DBCopy.ReplayLagStatus.ConfiguredLagTime -SeedingPostponed -WarningAction SilentlyContinue -ErrorAction Stop
                 
-                $Result = Wait-Until {(Get-MailboxDatabaseCopyStatus $($DBCopy).Name) -and ((Get-MailboxDatabaseCopyStatus $($DBCopy).Name ).status -notin "Unknown")}
+                $Result = Wait-Until -Status "DBCopy #$($CopyCount): $($DBCopy.Name)" -WaitMessage "Copy added" -Condition {(Get-MailboxDatabaseCopyStatus $($DBCopy).Name) -and ((Get-MailboxDatabaseCopyStatus $($DBCopy).Name ).status -notin "Unknown")} -CurrentStatus {(Get-MailboxDatabaseCopyStatus $($DBCopy).Name ).status }
 
                 if ($Result)
                 {
@@ -455,7 +464,7 @@ If ($Cont -eq "Y")
                 }
                 else
                 {
-                    Write-Host "`nATTENTION: Within the last 10 minutes, we couldn't find DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", this can be a caused by AD replication delays, please verify." -ForegroundColor Red
+                    Write-Host "`nATTENTION: We couldn't find DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", this can be a caused by AD replication delays, please verify." -ForegroundColor Red
                 }
             }
             catch
@@ -483,13 +492,14 @@ If ($Cont -eq "Y")
         {
             $CopyCount++
 
-            $Result = Wait-Until {(Get-MailboxDatabaseCopyStatus $($DBCopy).Name) -and (Get-MailboxDatabaseCopyStatus $($DBCopy).Name).status -notmatch '^(Unknown|Disconnected.*)$'}
+            Write-host "`nSUSPENDING DBCopy #$CopyCount (""$($DBCopy.Name)"")..."
+
+            $Result = Wait-Until -Status "DBCopy #$($CopyCount): $($DBCopy.Name)" -WaitMessage "DBCopy ready for being suspended" -Condition {(Get-MailboxDatabaseCopyStatus $($DBCopy).Name) -and (Get-MailboxDatabaseCopyStatus $($DBCopy).Name).status -notmatch '^(Unknown|Disconnected.*)$'} -CurrentStatus {(Get-MailboxDatabaseCopyStatus $($DBCopy).Name ).status }
             
             if ($Result)
             {
                 try
                 {
-                    Write-host "`nSUSPENDING DBCopy #$CopyCount (""$($DBCopy.Name)"")..."
                     $suspend = Suspend-MailboxDatabaseCopy $DBCopy.Name -WarningAction SilentlyContinue -ErrorAction Stop
                     Write-Host "...SUCCESSFUL, DBCopy #$CopyCount was suspended." -ForegroundColor Green
                 }
@@ -500,7 +510,7 @@ If ($Cont -eq "Y")
             }
             else
             {
-                Write-Host "`nATTENTION: Within the last 10 minutes, we couldn't SUSPEND DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", this can be caused by AD replication delays, please verify." -ForegroundColor Red
+                Write-Host "`nATTENTION: We couldn't SUSPEND DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", this can be caused by AD replication or Exchange replication service delays, please verify." -ForegroundColor Red
             }
             Start-Sleep 2
         }
@@ -523,13 +533,14 @@ If ($Cont -eq "Y")
         {
             $CopyCount++
 
-            $Result = Wait-Until {(Get-MailboxDatabaseCopyStatus $($DBCopy).Name).status -like "*Suspended*"}
+            Write-host "`nSEEDING DBCopy #$CopyCount (""$($DBCopy.Name)"")..."
+
+            $Result = Wait-Until -Status "DBCopy #$($CopyCount): $($DBCopy.Name)" -WaitMessage "DBCopy ready for being seeded" -Condition {(Get-MailboxDatabaseCopyStatus $($DBCopy).Name).status -like "*Suspended*"} -CurrentStatus {(Get-MailboxDatabaseCopyStatus $($DBCopy).Name ).status }
 
             if ($Result)
             {
                 try
                 {
-                    Write-host "`nSEEDING DBCopy #$CopyCount (""$($DBCopy.Name)"")..."
                     $seed = Get-MailboxDatabaseCopyStatus $DBCopy.Name | Update-MailboxDatabaseCopy -DeleteExistingFiles -Confirm:$false -Force -WarningAction SilentlyContinue -ErrorAction Stop
                     Write-Host "...SUCCESSFUL, DBCopy #$CopyCount was seeded." -ForegroundColor Green
                 }
@@ -540,7 +551,7 @@ If ($Cont -eq "Y")
             }
             else
             {
-                Write-Host "`nATTENTION: Within the last 10 minutes, we couldn't SEED DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", this can be caused by AD replication delays, please verify." -ForegroundColor Red
+                Write-Host "`nATTENTION: We couldn't SEED DBCopy #$CopyCount of database ""$Database"" on Mailboxserver ""$($DBCopy.Mailboxserver)"", this can be caused by AD replication or Exchange replication service delays, please verify." -ForegroundColor Red
             }
             Start-Sleep 2
         }
@@ -609,6 +620,9 @@ If ($Cont -eq "Y")
         {
             $circ = Get-MailboxDatabase $Database | Set-MailboxDatabase -CircularLoggingEnabled $True -WarningAction SilentlyContinue -ErrorAction Stop
             Write-Host "...SUCCESSFUL!" -ForegroundColor Green
+            
+            Get-MailboxDatabase $Database | Format-Table Name,CircularLoggingEnabled
+
             Start-Sleep 2
         }
         catch
